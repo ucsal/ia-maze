@@ -14,10 +14,10 @@ class Agente:
         self.total_comidas_no_mapa = total_comidas
         self.comidas_coletadas = 0
         self.passos = 0
-        
-        # A memória do agente sobre o mapa. Dicionário: (x, y) -> caractere
+
         self.memoria = {}
         self.historico_posicoes = [(self.x, self.y)] # Para gerar o vídeo
+        self.contagem_visitas = {}
 
     # --- SENSOR ---
     def getSensor(self):
@@ -67,6 +67,7 @@ class Agente:
         if celula_alvo != 'X':
             x_antigo, y_antigo = self.x, self.y
             self.x, self.y = futuro_x, futuro_y
+            self.contagem_visitas[(self.x, self.y)] = self.contagem_visitas.get((self.x, self.y), 0) + 1
             
             self.passos += 1
             
@@ -85,59 +86,67 @@ class Agente:
         else:
             return False
 
+    # Dentro da classe Agente
     def _decidir_proxima_acao(self, visao):
         """
-        Lógica de decisão do agente mais robusta para evitar loops.
+        LÓGICA DE DECISÃO AVANÇADA
+        O agente lida com o mapa ambíguo e usa contagem de visitas para evitar loops.
         """
         # --- Dicionários de ajuda ---
-        rotacao_direita = {'N': 'L', 'L': 'S', 'S': 'O', 'O': 'N'}
-        rotacao_esquerda = {'N': 'O', 'O': 'S', 'S': 'L', 'L': 'N'}
         frente = {'N': (0, -1), 'S': (0, 1), 'L': (1, 0), 'O': (-1, 0)}
+        direcoes_possiveis = ['N', 'S', 'L', 'O']
 
-        # Função auxiliar para verificar se uma célula está livre
-        def verificar_celula(direcao):
+        # --- REGRA DE INTERPRETAÇÃO DE TERRENO ---
+        def celula_esta_livre(x, y):
+            celula = self.memoria.get((x, y))
+            if celula == 'X':
+                return False  # Parede é sempre bloqueada
+            # REGRA PRINCIPAL: 'S' é tratado como parede se ainda houver comida.
+            if celula == 'S' and self.comidas_coletadas < self.total_comidas_no_mapa:
+                return False  # 'S' é uma parede temporária
+            return True
+
+        # --- LÓGICA DE DECISÃO HIERÁRQUICA ---
+
+        # Objetivo 1 e 2: Se comida ou saída (e todas as comidas foram coletadas)
+        # estiverem adjacentes, ir diretamente para elas. Esta é uma ação reativa.
+        for direcao in direcoes_possiveis:
             dx, dy = frente[direcao]
-            return self.memoria.get((self.x + dx, self.y + dy)) != 'X'
+            px, py = self.x + dx, self.y + dy
+            celula_alvo = self.memoria.get((px, py))
 
-        # --- Lógica de Decisão Hierárquica ---
+            if celula_alvo == 'o':
+                self.setDirection(direcao)
+                self.move()
+                return
 
-        # Objetivo 1: Se todas as comidas foram coletadas, buscar a saída 'S'
-        if self.comidas_coletadas == self.total_comidas_no_mapa:
-            for i in range(3):
-                for j in range(3):
-                    if visao[i][j] == 'S':
-                        # Se a saída está adjacente, move-se para ela
-                        if j == 1 and i == 0: self.setDirection('N'); self.move(); return
-                        if j == 1 and i == 2: self.setDirection('S'); self.move(); return
-                        if j == 0 and i == 1: self.setDirection('O'); self.move(); return
-                        if j == 2 and i == 1: self.setDirection('L'); self.move(); return
+            if celula_alvo == 'S' and self.comidas_coletadas == self.total_comidas_no_mapa:
+                self.setDirection(direcao)
+                self.move()
+                return
 
-        # Objetivo 2: Procurar por comida na visão imediata
-        for i in range(3):
-            for j in range(3):
-                if visao[i][j] == 'o':
-                    # Se a comida está adjacente, move-se para ela
-                    if j == 1 and i == 0: self.setDirection('N'); self.move(); return
-                    if j == 1 and i == 2: self.setDirection('S'); self.move(); return
-                    if j == 0 and i == 1: self.setDirection('O'); self.move(); return
-                    if j == 2 and i == 1: self.setDirection('L'); self.move(); return
+        # --- Objetivo 3: EXPLORAÇÃO INTELIGENTE BASEADA EM MEMÓRIA ---
+        # Escolhe a direção que leva à célula menos visitada.
 
-        # Objetivo 3: Explorar usando a regra da "mão direita" de forma mais segura
-        dir_a_direita = rotacao_direita[self.direcao]
-        dir_a_frente = self.direcao
-        dir_a_esquerda = rotacao_esquerda[self.direcao]
+        movimentos_validos = []
+        for direcao in direcoes_possiveis:
+            dx, dy = frente[direcao]
+            px, py = self.x + dx, self.y + dy
+            if celula_esta_livre(px, py):
+                contagem = self.contagem_visitas.get((px, py), 0)
+                movimentos_validos.append((direcao, contagem))
 
-        if verificar_celula(dir_a_direita):
-            # 1. Se o caminho à direita está livre, vira e move
-            self.setDirection(dir_a_direita)
-            self.move()
-        elif verificar_celula(dir_a_frente):
-            # 2. Senão, se o caminho à frente está livre, move
-            self.move()
-        else:
-            # 3. Senão, apenas vira à esquerda (fica pronto para o próximo passo)
-            # Em um beco sem saída, ele vai virar à esquerda até encontrar um caminho.
-            self.setDirection(dir_a_esquerda)
+        if not movimentos_validos:
+            self.setDirection('N')  # Apenas uma direção padrão para não travar
+            return
+
+
+        movimentos_validos.sort(key=lambda item: item[1])
+          # A melhor direção é a primeira da lista ordenada
+        melhor_direcao = movimentos_validos[0][0]
+
+        self.setDirection(melhor_direcao)
+        self.move()
         
     def executar(self):
         """
@@ -155,7 +164,7 @@ class Agente:
             print(self.ambiente)
             print(f"Posição: ({self.x}, {self.y}) | Direção: {self.direcao}")
             print(f"Passos: {self.passos} | Comidas: {self.comidas_coletadas}/{self.total_comidas_no_mapa}")
-            
+
             # Condição de parada
             if self.comidas_coletadas == self.total_comidas_no_mapa and \
                self.memoria.get((self.x, self.y)) == 'S':
